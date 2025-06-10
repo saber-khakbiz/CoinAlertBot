@@ -24,7 +24,8 @@ TOKENS = {
     "terra-luna": "LUNA",
     "shiba-inu": "SHIB",
     "ripple": "XRP",
-    "dogs-2":"DOGS"
+    "dogs-2":"DOGS",
+    "x-empire":"X Empire"
 }
 
 # Thresholds for alerts
