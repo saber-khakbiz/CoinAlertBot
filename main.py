@@ -37,7 +37,14 @@ TOKENS = {
     "the-open-network":"Ton",
     "pudgy-penguins":"Pudgy Penguins",
     "polkadot":"Polkadot",
-    "sonic-3":"SONIC"
+    "sonic-3":"SONIC",
+    "stellar":"Stellar",
+    "polygon-ecosystem-token":"PLYGON",
+    "official-trump":"TRUMP",
+    "baby-doge-coin":"Baby-Doge",
+    "pancakeswap-token":"CAKE",
+    "solayer":"Layer",
+    "xen-crypto":"Xen"
 }
 
 # Thresholds for alerts
