@@ -26,7 +26,12 @@ TOKENS = {
     "ripple": "XRP",
     "dogs-2":"DOGS",
     "x-empire":"X Empire",
-    "aura-on-sol":"Aura"
+    "aura-on-sol":"Aura",
+    "tron":"Tron",
+    "pi-network":"PI",
+    "aptos":"Aptos",
+    "stupidcoin-2":"STUPID",
+    "jupiter-exchange-solana":"JUPITER"
 }
 
 # Thresholds for alerts
