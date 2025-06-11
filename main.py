@@ -209,11 +209,11 @@ async def check_tokens():
         
         # For testing purposes, let's also check smaller changes
         # Remove this after testing
-        if abs(price_change) >= 1.0 or abs(volume_change) >= 1.0:
-            print(f"🔍 {symbol} shows change - Price: {price_change:.2f}%, Volume: {volume_change:.2f}%")
+        #if abs(price_change) >= 1.0 or abs(volume_change) >= 1.0:
+        #   print(f"🔍 {symbol} shows change - Price: {price_change:.2f}%, Volume: {volume_change:.2f}%")
         
         # Check for pump conditions
-        if price_change >= PRICE_CHANGE_THRESHOLD or volume_change >= VOLUME_CHANGE_THRESHOLD:
+        if price_change >= PRICE_CHANGE_THRESHOLD and volume_change >= VOLUME_CHANGE_THRESHOLD:
             if await send_pump_alert(symbol, price, price_change, volume, volume_change):
                 alerts_sent += 1
         
