@@ -25,7 +25,8 @@ TOKENS = {
     "shiba-inu": "SHIB",
     "ripple": "XRP",
     "dogs-2":"DOGS",
-    "x-empire":"X Empire"
+    "x-empire":"X Empire",
+    "aura-on-sol":"Aura"
 }
 
 # Thresholds for alerts
