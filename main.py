@@ -31,7 +31,13 @@ TOKENS = {
     "pi-network":"PI",
     "aptos":"Aptos",
     "stupidcoin-2":"STUPID",
-    "jupiter-exchange-solana":"JUPITER"
+    "jupiter-exchange-solana":"JUPITER",
+    "shiba-inu":"Shiba",
+    "solana":"Solana",
+    "the-open-network":"Ton",
+    "pudgy-penguins":"Pudgy Penguins",
+    "polkadot":"Polkadot",
+    "sonic-3":"SONIC"
 }
 
 # Thresholds for alerts
