@@ -12,8 +12,8 @@ A simple Telegram bot that fetches Bitcoin price every minute and sends it to yo
 
 Make sure to define the following variables in your `.env` file or in Railway:
 
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
+- `BOT_TOKEN`
+- `CHAT_ID`
 
 ## 🚀 Deployment
 
