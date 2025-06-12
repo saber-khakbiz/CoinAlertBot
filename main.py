@@ -44,7 +44,9 @@ TOKENS = {
     "baby-doge-coin":"Baby-Doge",
     "pancakeswap-token":"CAKE",
     "solayer":"Layer",
-    "xen-crypto":"Xen"
+    "xen-crypto":"Xen",
+    "pepe":"PEPE",
+    
 }
 
 # Thresholds for alerts
@@ -55,7 +57,7 @@ VOLUME_CHANGE_THRESHOLD = 5.0  # 5% volume change
 SEND_REGULAR_UPDATES = True  # Send price updates every cycle
 SEND_ONLY_PUMPS = True      # Only send pump alerts
 UPDATE_INTERVAL = 300        # Send regular updates every 5 minutes (300 seconds)
-Check_Time  = 60             # Send request to API every 1 minutes (60 seconds)
+Check_Time  = 300             # Send request to API every 1 minutes (60 seconds)
 
 last_prices = {}
 last_volumes = {}
