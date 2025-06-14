@@ -46,6 +46,7 @@ TOKENS = {
     "solayer":"Layer",
     "xen-crypto":"Xen",
     "pepe":"PEPE",
+    "pax-gold":"PAXG",
     
 }
 
