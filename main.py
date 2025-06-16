@@ -51,7 +51,7 @@ TOKENS = {
 }
 
 # Thresholds for alerts
-PRICE_CHANGE_THRESHOLD = 2.0  # 5% price change
+PRICE_CHANGE_THRESHOLD = 4.0 # 5% price change
 VOLUME_CHANGE_THRESHOLD = 5.0  # 5% volume change
 
 # Settings
