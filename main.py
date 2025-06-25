@@ -59,14 +59,14 @@ TOKENS = {
 }
 
 # Thresholds for alerts
-PRICE_CHANGE_THRESHOLD = 4.0 # 5% price change
+PRICE_CHANGE_THRESHOLD = 5.0 # 5% price change
 VOLUME_CHANGE_THRESHOLD = 5.0  # 5% volume change
 
 # Settings
 SEND_REGULAR_UPDATES = True  # Send price updates every cycle
 SEND_ONLY_PUMPS = True      # Only send pump alerts
 UPDATE_INTERVAL = 300        # Send regular updates every 5 minutes (300 seconds)
-Check_Time  = 300             # Send request to API every 1 minutes (60 seconds)
+Check_Time  = 60             # Send request to API every 1 minutes (60 seconds)
 
 last_prices = {}
 last_volumes = {}
