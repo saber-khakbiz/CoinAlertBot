@@ -11,9 +11,17 @@ load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# Ensure BOT_TOKEN and CHAT_ID are set in the environment variables
+# Parse CHAT_ID - support both single ID and comma-separated multiple IDs
 if not TOKEN or not CHAT_ID:
     raise Exception("Please set BOT_TOKEN and CHAT_ID in Secrets.")
+
+# Convert CHAT_ID to list if multiple IDs are provided
+if ',' in CHAT_ID:
+    CHAT_IDS = [chat_id.strip() for chat_id in CHAT_ID.split(',')]
+else:
+    CHAT_IDS = [CHAT_ID.strip()]
+
+print(f"📋 Bot will send messages to {len(CHAT_IDS)} chat(s)")
 
 bot = Bot(token=TOKEN)
 
@@ -111,8 +119,32 @@ def get_all_prices_and_volumes():
         print(f"⛔ Unexpected error fetching prices: {e}")
         return {}
 
+async def send_to_all_chats(message, parse_mode=None):
+    """Send message to all chat IDs"""
+    success_count = 0
+    failed_chats = []
+    
+    for chat_id in CHAT_IDS:
+        try:
+            if parse_mode:
+                await bot.send_message(chat_id=chat_id, text=message, parse_mode=parse_mode)
+            else:
+                await bot.send_message(chat_id=chat_id, text=message)
+            success_count += 1
+            # Small delay to avoid rate limiting
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            print(f"❌ Failed to send message to {chat_id}: {e}")
+            failed_chats.append(chat_id)
+    
+    print(f"📤 Message sent to {success_count}/{len(CHAT_IDS)} chats")
+    if failed_chats:
+        print(f"❌ Failed chats: {failed_chats}")
+    
+    return success_count > 0
+
 async def send_pump_alert(symbol, price, change_percent, volume, volume_change_percent):
-    """Send pump alert to Telegram"""
+    """Send pump alert to all Telegram chats"""
     msg = (
         f"🚀 Pump detected in 1 minute!\n"
         f"🔹 Token: {symbol}\n"
@@ -122,29 +154,21 @@ async def send_pump_alert(symbol, price, change_percent, volume, volume_change_p
         f"📊 24h Volume: ${volume:,.2f}"
     )
     
-    try:
-        await bot.send_message(chat_id=CHAT_ID, text=msg)
+    success = await send_to_all_chats(msg)
+    if success:
         print(f"📤 Alert sent for {symbol}")
-        return True
-    except Exception as e:
-        print(f"❌ Error sending message for {symbol}: {e}")
-        return False
+    return success
 
-async def send_message_safe(text):
-    """Safely send a message to Telegram"""
-    try:
-        await bot.send_message(chat_id=CHAT_ID, text=text)
-        return True
-    except Exception as e:
-        print(f"❌ Error sending message: {e}")
-        return False
+async def send_message_safe(text, parse_mode=None):
+    """Safely send a message to all Telegram chats"""
+    return await send_to_all_chats(text, parse_mode)
 
 async def test_bot_connection():
-    """Test if bot can send messages"""
+    """Test if bot can send messages to all chats"""
     try:
         print("🔍 Testing bot connection...")
         print(f"📋 Bot Token: {TOKEN[:10]}...{TOKEN[-5:] if len(TOKEN) > 15 else 'INVALID'}")
-        print(f"📋 Chat ID: {CHAT_ID}")
+        print(f"📋 Chat IDs: {CHAT_IDS}")
         
         # Test message
         success = await send_message_safe("🔧 Bot connection test - If you see this, everything works!")
@@ -158,13 +182,13 @@ async def test_bot_connection():
         print(f"❌ Bot connection test failed: {e}")
         print("💡 Please check:")
         print("   1. BOT_TOKEN is correct")
-        print("   2. CHAT_ID is correct") 
-        print("   3. Bot has been started in Telegram (/start)")
-        print("   4. Bot is not blocked")
+        print("   2. CHAT_IDs are correct") 
+        print("   3. Bot has been started in all Telegram chats (/start)")
+        print("   4. Bot is not blocked in any chat")
         return False
 
 async def send_regular_update(data):
-    """Send regular price update"""
+    """Send regular price update to all chats"""
     global last_update_time
     current_time = time.time()
     
@@ -194,9 +218,9 @@ async def send_regular_update(data):
     msg_parts.append(f"\n🕐 Updated: {time.strftime('%H:%M:%S')}")
     
     try:
-        await bot.send_message(chat_id=CHAT_ID, text="\n".join(msg_parts), parse_mode='Markdown')
+        await send_to_all_chats("\n".join(msg_parts), parse_mode='Markdown')
         last_update_time = current_time
-        print("📤 Regular update sent")
+        print("📤 Regular update sent to all chats")
     except Exception as e:
         print(f"❌ Error sending regular update: {e}")
 
@@ -229,11 +253,6 @@ async def check_tokens():
         
         print(f"💰 {symbol}: ${price:.10f} (Price: {price_change:+.2f}%, Volume: {volume_change:+.2f}%)")
         
-        # For testing purposes, let's also check smaller changes
-        # Remove this after testing
-        #if abs(price_change) >= 1.0 or abs(volume_change) >= 1.0:
-        #   print(f"🔍 {symbol} shows change - Price: {price_change:.2f}%, Volume: {volume_change:.2f}%")
-        
         # Check for pump conditions
         if price_change >= PRICE_CHANGE_THRESHOLD and volume_change >= VOLUME_CHANGE_THRESHOLD:
             if await send_pump_alert(symbol, price, price_change, volume, volume_change):
@@ -244,7 +263,7 @@ async def check_tokens():
         last_volumes[symbol] = volume
     
     if alerts_sent > 0:
-        print(f"🎯 Sent {alerts_sent} pump alerts")
+        print(f"🎯 Sent {alerts_sent} pump alerts to all chats")
     else:
         print("😴 No pumps detected this round")
     
