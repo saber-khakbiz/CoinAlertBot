@@ -34,7 +34,7 @@ VOLUME_CHANGE_THRESHOLD = 5.0  # 5% volume change
 SEND_REGULAR_UPDATES = True  # Send price updates every cycle
 SEND_ONLY_PUMPS = True      # Only send pump alerts
 UPDATE_INTERVAL = 300        # Send regular updates every 5 minutes (300 seconds)
-Check_Time  = 60             # Send request to API every 1 minutes (60 seconds)
+Check_Time  = 150             # Send request to API every 1 minutes (60 seconds)
 
 last_prices = {}
 last_volumes = {}
@@ -114,7 +114,7 @@ async def send_to_all_chats(message, parse_mode=None):
 async def send_pump_alert(symbol, price, change_percent, volume, volume_change_percent):
     """Send pump alert to all Telegram chats"""
     msg = (
-        f"🚀 Pump detected in 1 minute!\n"
+        f"🚀 Pump detected!\n"
         f"🔹 Token: {symbol}\n"
         f"💰 Price: ${price:.8f}\n"
         f"📈 Price Change: {change_percent:.2f}%\n"

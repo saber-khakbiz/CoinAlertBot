@@ -50,5 +50,11 @@ TOKENS = {
     "chainlink":"Chain Link",
     "avalanche-2":"Avalanche",
     "aave":"Aave",
-    "optimism":"Optimism"
+    "optimism":"Optimism",
+    "gooncoin":"GOONC",
+    "plume":"PLUME",
+    "ribbit-meme":"Ribbit Meme",
+    "gatechain-token":"Gate",
+    "polygon-ecosystem-token":"Matic"
+    
 }
