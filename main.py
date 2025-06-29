@@ -4,7 +4,7 @@ import requests
 import asyncio
 from telegram import Bot
 from dotenv import load_dotenv
-
+from tokens import TOKENS
 
 load_dotenv()
 
@@ -25,38 +25,6 @@ print(f"📋 Bot will send messages to {len(CHAT_IDS)} chat(s)")
 
 bot = Bot(token=TOKEN)
 
-TOKENS = {
-    "bitcoin": "BTC",
-    "dogecoin": "DOGE",
-    "baby-doge-coin": "BABYDOGE",
-    "terra-luna": "LUNA",
-    "shiba-inu": "SHIB",
-    "ripple": "XRP",
-    "dogs-2":"DOGS",
-    "x-empire":"X Empire",
-    "aura-on-sol":"Aura",
-    "tron":"Tron",
-    "pi-network":"PI",
-    "aptos":"Aptos",
-    "stupidcoin-2":"STUPID",
-    "jupiter-exchange-solana":"JUPITER",
-    "shiba-inu":"Shiba",
-    "solana":"Solana",
-    "the-open-network":"Ton",
-    "pudgy-penguins":"Pudgy Penguins",
-    "polkadot":"Polkadot",
-    "sonic-3":"SONIC",
-    "stellar":"Stellar",
-    "polygon-ecosystem-token":"PLYGON",
-    "official-trump":"TRUMP",
-    "baby-doge-coin":"Baby-Doge",
-    "pancakeswap-token":"CAKE",
-    "solayer":"Layer",
-    "xen-crypto":"Xen",
-    "pepe":"PEPE",
-    "pax-gold":"PAXG",
-    
-}
 
 # Thresholds for alerts
 PRICE_CHANGE_THRESHOLD = 5.0 # 5% price change
@@ -254,7 +222,7 @@ async def check_tokens():
         print(f"💰 {symbol}: ${price:.10f} (Price: {price_change:+.2f}%, Volume: {volume_change:+.2f}%)")
         
         # Check for pump conditions
-        if price_change >= PRICE_CHANGE_THRESHOLD and volume_change >= VOLUME_CHANGE_THRESHOLD:
+        if price_change >= PRICE_CHANGE_THRESHOLD:
             if await send_pump_alert(symbol, price, price_change, volume, volume_change):
                 alerts_sent += 1
         
