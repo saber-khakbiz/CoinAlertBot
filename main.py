@@ -114,8 +114,8 @@ async def send_to_all_chats(message, parse_mode=None):
 async def send_pump_alert(symbol, price, change_percent, volume, volume_change_percent):
     """Send pump alert to all Telegram chats"""
     msg = (
-        f"🚀 Pump detected!\n"
-        f"🔹 Token: {symbol}\n"
+        f"🚀 Price Alert detected!\n"
+        f"🔹 Token: #{symbol}\n"
         f"💰 Price: ${price:.8f}\n"
         f"📈 Price Change: {change_percent:.2f}%\n"
         f"📊 Volume Change: {volume_change_percent:.2f}%\n"
@@ -222,7 +222,7 @@ async def check_tokens():
         print(f"💰 {symbol}: ${price:.10f} (Price: {price_change:+.2f}%, Volume: {volume_change:+.2f}%)")
         
         # Check for pump conditions
-        if price_change >= PRICE_CHANGE_THRESHOLD:
+        if abs(price_change) >= PRICE_CHANGE_THRESHOLD:
             if await send_pump_alert(symbol, price, price_change, volume, volume_change):
                 alerts_sent += 1
         
