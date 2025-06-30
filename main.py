@@ -111,20 +111,37 @@ async def send_to_all_chats(message, parse_mode=None):
     
     return success_count > 0
 
-async def send_pump_alert(symbol, price, change_percent, volume, volume_change_percent):
-    """Send pump alert to all Telegram chats"""
-    msg = (
-        f"🚀 Price Alert detected!\n"
-        f"🔹 Token: #{symbol}\n"
-        f"💰 Price: ${price:.8f}\n"
-        f"📈 Price Change: {change_percent:.2f}%\n"
-        f"📊 Volume Change: {volume_change_percent:.2f}%\n"
-        f"📊 24h Volume: ${volume:,.2f}"
-    )
+async def send_price_alert(symbol, price, change_percent, volume, volume_change_percent):
+    """Send pump or dump alert to all Telegram chats"""
+    
+    if change_percent > 0:
+        # Pump Alert
+        msg = (
+            f"🚀 **PUMP ALERT** 🚀\n"
+            f"🔥 Token: #{symbol}\n"
+            f"💰 Price: ${price:.8f}\n"
+            f"📈 Price Change: +{change_percent:.2f}%\n"
+            f"📊 Volume Change: {volume_change_percent:+.2f}%\n"
+            f"📊 24h Volume: ${volume:,.2f}\n"
+            f"🎯 **TO THE MOON!** 🌙"
+        )
+        alert_type = "PUMP"
+    else:
+        # Dump Alert
+        msg = (
+            f"📉 **DUMP ALERT** 📉\n"
+            f"💔 Token: #{symbol}\n"
+            f"💰 Price: ${price:.8f}\n"
+            f"📉 Price Change: {change_percent:.2f}%\n"
+            f"📊 Volume Change: {volume_change_percent:+.2f}%\n"
+            f"📊 24h Volume: ${volume:,.2f}\n"
+            f"⚠️ **PRICE DROPPING!** ⚡"
+        )
+        alert_type = "DUMP"
     
     success = await send_to_all_chats(msg)
     if success:
-        print(f"📤 Alert sent for {symbol}")
+        print(f"📤 {alert_type} alert sent for {symbol}")
     return success
 
 async def send_message_safe(text, parse_mode=None):
@@ -223,7 +240,7 @@ async def check_tokens():
         
         # Check for pump conditions
         if abs(price_change) >= PRICE_CHANGE_THRESHOLD:
-            if await send_pump_alert(symbol, price, price_change, volume, volume_change):
+            if await send_price_alert(symbol, price, price_change, volume, volume_change):
                 alerts_sent += 1
         
         # Update stored values
@@ -231,9 +248,9 @@ async def check_tokens():
         last_volumes[symbol] = volume
     
     if alerts_sent > 0:
-        print(f"🎯 Sent {alerts_sent} pump alerts to all chats")
+        print(f"🎯 Sent {alerts_sent} price alerts to all chats")
     else:
-        print("😴 No pumps detected this round")
+        print("😴 No significant price changes detected this round")
     
     # Send regular updates if enabled
     if SEND_REGULAR_UPDATES and not SEND_ONLY_PUMPS:
@@ -248,7 +265,7 @@ async def main_async():
     
     try:
         # Send startup message
-        await send_message_safe("🤖 Crypto pump detector started successfully!")
+        await send_message_safe("🤖 Crypto price monitor started successfully!")
         print("🚀 Bot started successfully!")
         
         # Main monitoring loop
@@ -268,7 +285,7 @@ async def main_async():
             
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
-        await send_message_safe("🛑 Crypto pump detector stopped")
+        await send_message_safe("🛑 Crypto price monitor stopped")
     except Exception as e:
         print(f"💥 Fatal error: {e}")
         await send_message_safe(f"💥 Bot crashed: {str(e)[:100]}...")
