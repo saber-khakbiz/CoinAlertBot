@@ -117,7 +117,7 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
     if change_percent > 0:
         # Pump Alert
         msg = (
-            f"🚀 **PUMP ALERT** 🚀\n"
+            f"🚀 🟢🟢PUMP ALERT🟢🟢 🚀\n"
             f"🔥 Token: #{symbol}\n"
             f"💰 Price: ${price:.8f}\n"
             f"📈 Price Change: +{change_percent:.2f}%\n"
@@ -129,7 +129,7 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
     else:
         # Dump Alert
         msg = (
-            f"📉 **DUMP ALERT** 📉\n"
+            f"📉 🔴🔴DUMP ALERT🔴🔴 📉\n"
             f"💔 Token: #{symbol}\n"
             f"💰 Price: ${price:.8f}\n"
             f"📉 Price Change: {change_percent:.2f}%\n"
