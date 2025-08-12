@@ -75,5 +75,6 @@ TOKENS = {
     "agentfun-ai":"AGENTFun",
     "book-of-meme":"BOOK-OF-MEME",
     "fitcoin-3":"FITCoin",
-    "zuzalu-inu":"Zuzalu"  
+    "zuzalu-inu":"Zuzalu",
+    "kava": "Kava"
 }
