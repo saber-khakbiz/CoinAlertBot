@@ -76,5 +76,16 @@ TOKENS = {
     "book-of-meme":"BOOK-OF-MEME",
     "fitcoin-3":"FITCoin",
     "zuzalu-inu":"Zuzalu",
-    "kava": "Kava"
+    "kava": "Kava",
+    "assisterr-ai":"ASRR",
+    "aspecta":"ASP",
+    "lagrange":"LAGRANGE",
+    "trusta-ai":"TRUSTA-AI",
+    "polyhedra-network":"ZKJ",
+    "magic":"Magic",
+    "myx-finance":"MYX",
+    "troll-2":"Troll",
+    "conflux-token":"CFX",
+    "woo-network":"WOO",
+    "soon-2":"Soon"
 }
