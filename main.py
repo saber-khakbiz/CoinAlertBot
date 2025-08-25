@@ -25,6 +25,8 @@ print(f"📋 Bot will send messages to {len(CHAT_IDS)} chat(s)")
 
 bot = Bot(token=TOKEN)
 
+# File paths for custom messages
+MESSAGE_FILE_PATH = "bot_messages.txt"  # فایل برای پیام‌های سفارشی - می‌توانید مسیر را تغییر دهید
 
 # Thresholds for alerts
 PRICE_CHANGE_THRESHOLD = 5.0 # 5% price change
@@ -39,6 +41,27 @@ Check_Time  = 150             # Send request to API every 1 minutes (60 seconds)
 last_prices = {}
 last_volumes = {}
 last_update_time = 0
+
+def read_message_from_file(file_path):
+    """
+    خواندن پیام از فایل مشخص شده
+    اگر فایل وجود نداشته باشد یا خالی باشد، None برمی‌گرداند
+    """
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as file:
+                message = file.read().strip()
+                if message:  # اگر فایل خالی نباشد
+                    return message
+                else:
+                    print(f"📄 File {file_path} is empty, no message to send")
+                    return None
+        else:
+            print(f"📄 File {file_path} does not exist, no message to send")
+            return None
+    except Exception as e:
+        print(f"❌ Error reading message file {file_path}: {e}")
+        return None
 
 def get_all_prices_and_volumes():
     """Fetch all token prices and volumes in a single API call"""
@@ -155,14 +178,21 @@ async def test_bot_connection():
         print(f"📋 Bot Token: {TOKEN[:10]}...{TOKEN[-5:] if len(TOKEN) > 15 else 'INVALID'}")
         print(f"📋 Chat IDs: {CHAT_IDS}")
         
-        # Test message
-        success = await send_message_safe("🔧 Bot connection test - If you see this, everything works!")
-        if success:
-            print("✅ Bot connection test successful!")
-            return True
+        # خواندن پیام از فایل برای تست اتصال
+        test_message = read_message_from_file(MESSAGE_FILE_PATH)
+        
+        if test_message:
+            success = await send_message_safe(test_message)
+            if success:
+                print("✅ Bot connection test successful!")
+                return True
+            else:
+                print("❌ Bot connection test failed!")
+                return False
         else:
-            print("❌ Bot connection test failed!")
-            return False
+            print("✅ Bot connection verified (no test message to send)")
+            return True
+            
     except Exception as e:
         print(f"❌ Bot connection test failed: {e}")
         print("💡 Please check:")
@@ -263,9 +293,7 @@ async def main_async():
         print("🛑 Stopping due to connection issues")
         return
     
-    try:
-        # Send startup message
-        await send_message_safe("🤖 Crypto price monitor started successfully!")
+    try:        
         print("🚀 Bot started successfully!")
         
         # Main monitoring loop
@@ -285,7 +313,10 @@ async def main_async():
             
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
-        await send_message_safe("🛑 Crypto price monitor stopped")
+        # خواندن پیام خاتمه از فایل
+        stop_message = read_message_from_file(MESSAGE_FILE_PATH)
+        if stop_message:
+            await send_message_safe(stop_message)
     except Exception as e:
         print(f"💥 Fatal error: {e}")
         await send_message_safe(f"💥 Bot crashed: {str(e)[:100]}...")
@@ -302,4 +333,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
