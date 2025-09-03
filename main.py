@@ -26,21 +26,34 @@ print(f"📋 Bot will send messages to {len(CHAT_IDS)} chat(s)")
 bot = Bot(token=TOKEN)
 
 # File paths for custom messages
-MESSAGE_FILE_PATH = "bot_messages.txt"  # فایل برای پیام‌های سفارشی - می‌توانید مسیر را تغییر دهید
+MESSAGE_FILE_PATH = "bot_messages.txt"
 
 # Thresholds for alerts
-PRICE_CHANGE_THRESHOLD = 5.0 # 5% price change
+PRICE_CHANGE_THRESHOLD = 5.0  # 5% price change
 VOLUME_CHANGE_THRESHOLD = 5.0  # 5% volume change
 
 # Settings
-SEND_REGULAR_UPDATES = True  # Send price updates every cycle
-SEND_ONLY_PUMPS = True      # Only send pump alerts
-UPDATE_INTERVAL = 300        # Send regular updates every 5 minutes (300 seconds)
-Check_Time  = 230            # Send request to API every 1 minutes (60 seconds)
+SEND_REGULAR_UPDATES = True
+SEND_ONLY_PUMPS = False  # تغییر شد: False تا dump alert هم ارسال شود
+UPDATE_INTERVAL = 300
+CHECK_INTERVAL = 120  # Check API every 2 minutes (safe from rate limiting)
 
-last_prices = {}
-last_volumes = {}
+# Multi-timeframe settings
+TIMEFRAMES = {
+    "3min": 180,   # 3 minutes in seconds
+    "5min": 300,   # 5 minutes in seconds
+    "15min": 900   # 15 minutes in seconds
+}
+
+# Storage for historical data for each timeframe
+timeframe_data = {
+    "3min": {"prices": {}, "volumes": {}, "last_check": 0},
+    "5min": {"prices": {}, "volumes": {}, "last_check": 0},
+    "15min": {"prices": {}, "volumes": {}, "last_check": 0},
+}
+
 last_update_time = 0
+startup_time = time.time()
 
 def read_message_from_file(file_path):
     """
@@ -51,7 +64,7 @@ def read_message_from_file(file_path):
         if os.path.exists(file_path):
             with open(file_path, 'r', encoding='utf-8') as file:
                 message = file.read().strip()
-                if message:  # اگر فایل خالی نباشد
+                if message:
                     return message
                 else:
                     print(f"📄 File {file_path} is empty, no message to send")
@@ -67,7 +80,11 @@ def get_all_prices_and_volumes():
     """Fetch all token prices and volumes in a single API call"""
     url = "https://api.coingecko.com/api/v3/simple/price"
     
-    # Join all token IDs into a single comma-separated string
+    # Validate TOKENS dictionary
+    if not TOKENS:
+        print("❌ TOKENS dictionary is empty")
+        return {}
+    
     token_ids = ",".join(TOKENS.keys())
     
     params = {
@@ -77,20 +94,26 @@ def get_all_prices_and_volumes():
     }
     
     try:
-        response = requests.get(url, params=params, timeout=10)
+        print(f"🌐 Requesting data from CoinGecko API...")
+        response = requests.get(url, params=params, timeout=15)  # افزایش timeout
         response.raise_for_status()
         data = response.json()
         
-        # Process the data and return in a structured format
+        if not data:
+            print("⚠️ Empty response from API")
+            return {}
+        
         results = {}
         for cg_id, symbol in TOKENS.items():
             if cg_id in data:
-                price = data[cg_id].get("usd")
-                volume = data[cg_id].get("usd_24h_vol")
+                token_data = data[cg_id]
+                price = token_data.get("usd")
+                volume = token_data.get("usd_24h_vol")
+                
                 if price is not None and volume is not None:
                     results[symbol] = {
-                        "price": price,
-                        "volume": volume,
+                        "price": float(price),  # اطمینان از نوع داده
+                        "volume": float(volume),
                         "cg_id": cg_id
                     }
                 else:
@@ -98,10 +121,17 @@ def get_all_prices_and_volumes():
             else:
                 print(f"⚠️ No data returned for {symbol} ({cg_id})")
         
+        print(f"✅ Successfully fetched data for {len(results)} tokens")
         return results
         
     except requests.exceptions.Timeout:
-        print("⛔ Request timeout while fetching prices")
+        print("⛔ Request timeout while fetching prices (15s)")
+        return {}
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            print("⛔ Rate limited by API. Increase CHECK_INTERVAL!")
+        else:
+            print(f"⛔ HTTP error fetching prices: {e}")
         return {}
     except requests.exceptions.RequestException as e:
         print(f"⛔ Network error fetching prices: {e}")
@@ -111,19 +141,24 @@ def get_all_prices_and_volumes():
         return {}
 
 async def send_to_all_chats(message, parse_mode=None):
-    """Send message to all chat IDs"""
+    """Send message to all chat IDs with better error handling"""
     success_count = 0
     failed_chats = []
     
     for chat_id in CHAT_IDS:
         try:
+            # اعتبارسنجی chat_id
+            if not chat_id.strip():
+                print(f"⚠️ Empty chat ID, skipping")
+                continue
+                
             if parse_mode:
                 await bot.send_message(chat_id=chat_id, text=message, parse_mode=parse_mode)
             else:
                 await bot.send_message(chat_id=chat_id, text=message)
             success_count += 1
-            # Small delay to avoid rate limiting
-            await asyncio.sleep(0.1)
+            # افزایش تاخیر برای جلوگیری از rate limiting
+            await asyncio.sleep(0.2)
         except Exception as e:
             print(f"❌ Failed to send message to {chat_id}: {e}")
             failed_chats.append(chat_id)
@@ -134,15 +169,31 @@ async def send_to_all_chats(message, parse_mode=None):
     
     return success_count > 0
 
-async def send_price_alert(symbol, price, change_percent, volume, volume_change_percent):
-    """Send pump or dump alert to all Telegram chats"""
+async def send_price_alert(symbol, price, change_percent, volume, volume_change_percent, timeframe):
+    """Send pump or dump alert to all Telegram chats with timeframe info"""
+    
+    # اعتبارسنجی ورودی‌ها
+    if not symbol or price <= 0:
+        print(f"❌ Invalid data for alert: symbol={symbol}, price={price}")
+        return False
+    
+    # تعیین فرمت قیمت بر اساس مقدار
+    if price < 0.0001:
+        price_format = f"${price:.10f}"
+    elif price < 0.01:
+        price_format = f"${price:.8f}"
+    elif price < 1:
+        price_format = f"${price:.6f}"
+    else:
+        price_format = f"${price:.4f}"
     
     if change_percent > 0:
         # Pump Alert
         msg = (
             f"🚀 🟢🟢PUMP ALERT🟢🟢 🚀\n"
+            f"⏰ Timeframe: {timeframe}\n"
             f"🔥 Token: #{symbol}\n"
-            f"💰 Price: ${price:.8f}\n"
+            f"💰 Price: {price_format}\n"
             f"📈 Price Change: +{change_percent:.2f}%\n"
             f"📊 Volume Change: {volume_change_percent:+.2f}%\n"
             f"📊 24h Volume: ${volume:,.2f}\n"
@@ -153,23 +204,32 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
         # Dump Alert
         msg = (
             f"📉 🔴🔴DUMP ALERT🔴🔴 📉\n"
+            f"⏰ Timeframe: {timeframe}\n"
             f"💔 Token: #{symbol}\n"
-            f"💰 Price: ${price:.8f}\n"
+            f"💰 Price: {price_format}\n"
             f"📉 Price Change: {change_percent:.2f}%\n"
             f"📊 Volume Change: {volume_change_percent:+.2f}%\n"
             f"📊 24h Volume: ${volume:,.2f}\n"
-            f"⚠️ **PRICE DROPPING!** ⚡"
+            f"⚠️ **PRICE DROPPING!** ⚡️"
         )
         alert_type = "DUMP"
     
-    success = await send_to_all_chats(msg)
-    if success:
-        print(f"📤 {alert_type} alert sent for {symbol}")
-    return success
+    try:
+        success = await send_to_all_chats(msg)
+        if success:
+            print(f"📤 {alert_type} alert sent for {symbol} ({timeframe})")
+        return success
+    except Exception as e:
+        print(f"❌ Error sending {alert_type} alert for {symbol}: {e}")
+        return False
 
 async def send_message_safe(text, parse_mode=None):
     """Safely send a message to all Telegram chats"""
-    return await send_to_all_chats(text, parse_mode)
+    try:
+        return await send_to_all_chats(text, parse_mode)
+    except Exception as e:
+        print(f"❌ Error in send_message_safe: {e}")
+        return False
 
 async def test_bot_connection():
     """Test if bot can send messages to all chats"""
@@ -178,7 +238,6 @@ async def test_bot_connection():
         print(f"📋 Bot Token: {TOKEN[:10]}...{TOKEN[-5:] if len(TOKEN) > 15 else 'INVALID'}")
         print(f"📋 Chat IDs: {CHAT_IDS}")
         
-        # خواندن پیام از فایل برای تست اتصال
         test_message = read_message_from_file(MESSAGE_FILE_PATH)
         
         if test_message:
@@ -202,6 +261,103 @@ async def test_bot_connection():
         print("   4. Bot is not blocked in any chat")
         return False
 
+def should_check_timeframe(timeframe, current_time):
+    """Check if we should analyze this timeframe based on current time"""
+    tf_data = timeframe_data[timeframe]
+    interval = TIMEFRAMES[timeframe]
+    
+    # در startup اولیه، همه تایم‌فریم‌ها رو چک نکن
+    if current_time - startup_time < interval:
+        return False
+    
+    # اگر هیچ چک قبلی نداریم، چک کن
+    if tf_data["last_check"] == 0:
+        return True
+    
+    # چک کن که آیا زمان کافی گذشته
+    return (current_time - tf_data["last_check"]) >= interval
+
+def update_timeframe_data(timeframe, current_data, current_time):
+    """Update historical data for a specific timeframe"""
+    tf_data = timeframe_data[timeframe]
+    
+    for symbol, data in current_data.items():
+        tf_data["prices"][symbol] = data["price"]
+        tf_data["volumes"][symbol] = data["volume"]
+    
+    tf_data["last_check"] = current_time
+
+def get_price_changes(timeframe, current_data):
+    """Calculate price and volume changes for a specific timeframe"""
+    tf_data = timeframe_data[timeframe]
+    changes = {}
+    
+    for symbol, current_info in current_data.items():
+        current_price = current_info["price"]
+        current_volume = current_info["volume"]
+        
+        old_price = tf_data["prices"].get(symbol)
+        old_volume = tf_data["volumes"].get(symbol)
+        
+        if old_price is not None and old_volume is not None and old_price > 0 and old_volume > 0:
+            try:
+                price_change = ((current_price - old_price) / old_price) * 100
+                volume_change = ((current_volume - old_volume) / old_volume) * 100
+                
+                changes[symbol] = {
+                    "price_change": price_change,
+                    "volume_change": volume_change,
+                    "current_price": current_price,
+                    "current_volume": current_volume
+                }
+            except ZeroDivisionError:
+                print(f"⚠️ Division by zero for {symbol} in {timeframe}")
+                continue
+    
+    return changes
+
+async def check_timeframe(timeframe, current_data, current_time):
+    """Check a specific timeframe for alerts"""
+    print(f"🔍 Checking {timeframe} timeframe...")
+    
+    # Get price changes for this timeframe
+    changes = get_price_changes(timeframe, current_data)
+    
+    if not changes:
+        print(f"⚠️ No historical data available for {timeframe} comparison")
+        update_timeframe_data(timeframe, current_data, current_time)
+        return 0
+    
+    alerts_sent = 0
+    
+    for symbol, change_data in changes.items():
+        price_change = change_data["price_change"]
+        volume_change = change_data["volume_change"]
+        current_price = change_data["current_price"]
+        current_volume = change_data["current_volume"]
+        
+        print(f"💰 {symbol} ({timeframe}): Price: {price_change:+.2f}%, Volume: {volume_change:+.2f}%")
+        
+        # چک کردن تغییرات قیمت معنادار
+        if abs(price_change) >= PRICE_CHANGE_THRESHOLD:
+            try:
+                if await send_price_alert(symbol, current_price, price_change, current_volume, volume_change, timeframe):
+                    alerts_sent += 1
+                    # تاخیر بین ارسال هر alert
+                    await asyncio.sleep(1)
+            except Exception as e:
+                print(f"❌ Error sending alert for {symbol}: {e}")
+    
+    # به‌روزرسانی داده‌های تایم‌فریم بعد از چک
+    update_timeframe_data(timeframe, current_data, current_time)
+    
+    if alerts_sent > 0:
+        print(f"🎯 Sent {alerts_sent} alerts for {timeframe} timeframe")
+    else:
+        print(f"😴 No significant changes in {timeframe} timeframe")
+    
+    return alerts_sent
+
 async def send_regular_update(data):
     """Send regular price update to all chats"""
     global last_update_time
@@ -211,109 +367,107 @@ async def send_regular_update(data):
     if not SEND_REGULAR_UPDATES or (current_time - last_update_time) < UPDATE_INTERVAL:
         return
     
+    if not data:
+        return
+    
     msg_parts = ["📊 **Price Update:**\n"]
     
-    for symbol, info in data.items():
-        price = info["price"]
-        volume = info["volume"]
-        
-        old_price = last_prices.get(symbol, price)
-        price_change = ((price - old_price) / old_price) * 100 if old_price != 0 else 0
-        
-        # Choose emoji based on price change
-        if price_change > 0:
-            emoji = "🟢"
-        elif price_change < 0:
-            emoji = "🔴"
-        else:
-            emoji = "⚪"
-        
-        msg_parts.append(f"{emoji} **{symbol}**: ${price:.10f} ({price_change:+.2f}%)")
-    
-    msg_parts.append(f"\n🕐 Updated: {time.strftime('%H:%M:%S')}")
-    
     try:
+        for symbol, info in data.items():
+            price = info["price"]
+            
+            # فرمت بهتر برای قیمت
+            if price < 0.0001:
+                price_str = f"${price:.10f}"
+            elif price < 0.01:
+                price_str = f"${price:.8f}"
+            else:
+                price_str = f"${price:.6f}"
+            
+            msg_parts.append(f"💰 **{symbol}**: {price_str}")
+        
+        msg_parts.append(f"\n🕐 Updated: {time.strftime('%H:%M:%S')}")
+        
         await send_to_all_chats("\n".join(msg_parts), parse_mode='Markdown')
         last_update_time = current_time
         print("📤 Regular update sent to all chats")
     except Exception as e:
         print(f"❌ Error sending regular update: {e}")
 
-async def check_tokens():
-    """Check all tokens for pump signals"""
-    print("🔁 Fetching all token data...")
+async def check_all_timeframes():
+    """Check all tokens across multiple timeframes"""
+    print("🔁 Fetching current token data...")
     
-    # Get all prices and volumes in one API call
     current_data = get_all_prices_and_volumes()
     
     if not current_data:
         print("❌ No data received from API")
         return
     
-    print(f"✅ Successfully fetched data for {len(current_data)} tokens")
+    current_time = time.time()
+    total_alerts = 0
     
-    alerts_sent = 0
+    # Check each timeframe
+    for timeframe in TIMEFRAMES.keys():
+        try:
+            if should_check_timeframe(timeframe, current_time):
+                alerts = await check_timeframe(timeframe, current_data, current_time)
+                total_alerts += alerts
+            else:
+                remaining_time = TIMEFRAMES[timeframe] - (current_time - timeframe_data[timeframe]["last_check"])
+                print(f"⏭️ Skipping {timeframe} timeframe (next check in {remaining_time/60:.1f} min)")
+        except Exception as e:
+            print(f"❌ Error checking {timeframe}: {e}")
     
-    for symbol, data in current_data.items():
-        price = data["price"]
-        volume = data["volume"]
-        
-        # Get previous values
-        old_price = last_prices.get(symbol, price)
-        old_volume = last_volumes.get(symbol, volume)
-        
-        # Calculate percentage changes
-        price_change = ((price - old_price) / old_price) * 100 if old_price != 0 else 0
-        volume_change = ((volume - old_volume) / old_volume) * 100 if old_volume != 0 else 0
-        
-        print(f"💰 {symbol}: ${price:.10f} (Price: {price_change:+.2f}%, Volume: {volume_change:+.2f}%)")
-        
-        # Check for pump conditions
-        if abs(price_change) >= PRICE_CHANGE_THRESHOLD:
-            if await send_price_alert(symbol, price, price_change, volume, volume_change):
-                alerts_sent += 1
-        
-        # Update stored values
-        last_prices[symbol] = price
-        last_volumes[symbol] = volume
-    
-    if alerts_sent > 0:
-        print(f"🎯 Sent {alerts_sent} price alerts to all chats")
-    else:
-        print("😴 No significant price changes detected this round")
+    # Initialize empty timeframes (first run)
+    for timeframe in TIMEFRAMES.keys():
+        tf_data = timeframe_data[timeframe]
+        if not tf_data["prices"]:
+            update_timeframe_data(timeframe, current_data, current_time)
+            print(f"🔄 Initialized {timeframe} timeframe data")
     
     # Send regular updates if enabled
     if SEND_REGULAR_UPDATES and not SEND_ONLY_PUMPS:
         await send_regular_update(current_data)
+    
+    if total_alerts > 0:
+        print(f"🎯 Total alerts sent: {total_alerts}")
+    else:
+        print("😴 No alerts sent this cycle")
 
 async def main_async():
     """Main async bot loop"""
-    # Test bot connection first
     if not await test_bot_connection():
         print("🛑 Stopping due to connection issues")
         return
     
     try:        
-        print("🚀 Bot started successfully!")
+        print("🚀 Multi-timeframe bot started successfully!")
+        print(f"📊 Monitoring timeframes: {list(TIMEFRAMES.keys())}")
+        print(f"⏱️ Check interval: {CHECK_INTERVAL} seconds")
+        print(f"🎯 Price change threshold: {PRICE_CHANGE_THRESHOLD}%")
+        print(f"📈 Monitoring {len(TOKENS)} tokens")
         
-        # Main monitoring loop
+        cycle_count = 0
+        
         while True:
-            print(f"\n{'='*50}")
-            print(f"🕐 Starting check cycle at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            cycle_count += 1
+            print(f"\n{'='*60}")
+            print(f"🕐 Check cycle #{cycle_count} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
             
             try:
-                await check_tokens()
+                await check_all_timeframes()
             except Exception as e:
                 print(f"❌ Error in check cycle: {e}")
-                # Send error notification (optional)
-                await send_message_safe(f"⚠️ Bot error: {str(e)[:100]}...")
+                # ارسال خطا فقط برای خطاهای مهم
+                if "rate limit" in str(e).lower() or "connection" in str(e).lower():
+                    await send_message_safe(f"⚠️ Bot error: {str(e)[:100]}...")
             
-            print(f"⏳ Waiting {Check_Time} seconds for next check...")
-            await asyncio.sleep(Check_Time)
+            print(f"⏳ Waiting {CHECK_INTERVAL} seconds for next check...")
+            await asyncio.sleep(CHECK_INTERVAL)
             
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
-        # خواندن پیام خاتمه از فایل
         stop_message = read_message_from_file(MESSAGE_FILE_PATH)
         if stop_message:
             await send_message_safe(stop_message)
@@ -324,7 +478,6 @@ async def main_async():
 def main():
     """Main function to run the async bot"""
     try:
-        # Run the async main function
         asyncio.run(main_async())
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
