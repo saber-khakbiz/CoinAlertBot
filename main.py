@@ -90,7 +90,8 @@ def get_all_prices_and_volumes():
     params = {
         "ids": token_ids,
         "vs_currencies": "usd",
-        "include_24hr_vol": "true"
+        "include_24hr_vol": "true",
+        "include_market_cap": "true"  # اضافه کردن market cap
     }
     
     try:
@@ -104,24 +105,36 @@ def get_all_prices_and_volumes():
             return {}
         
         results = {}
+        total_market_cap = 0  # برای محاسبه مجموع market cap
+        
         for cg_id, symbol in TOKENS.items():
             if cg_id in data:
                 token_data = data[cg_id]
                 price = token_data.get("usd")
                 volume = token_data.get("usd_24h_vol")
+                market_cap = token_data.get("usd_market_cap")
                 
                 if price is not None and volume is not None:
                     results[symbol] = {
                         "price": float(price),  # اطمینان از نوع داده
                         "volume": float(volume),
+                        "market_cap": float(market_cap) if market_cap is not None else 0,
                         "cg_id": cg_id
                     }
+                    # اضافه کردن به مجموع market cap
+                    if market_cap is not None:
+                        total_market_cap += float(market_cap)
                 else:
                     print(f"⚠️ Missing price or volume data for {symbol}")
             else:
                 print(f"⚠️ No data returned for {symbol} ({cg_id})")
         
+        # اضافه کردن total market cap به نتایج
+        if results:
+            results["_total_market_cap"] = total_market_cap
+        
         print(f"✅ Successfully fetched data for {len(results)} tokens")
+        print(f"💰 Total Market Cap: ${total_market_cap:,.2f}")
         return results
         
     except requests.exceptions.Timeout:
@@ -169,8 +182,8 @@ async def send_to_all_chats(message, parse_mode=None):
     
     return success_count > 0
 
-async def send_price_alert(symbol, price, change_percent, volume, volume_change_percent, timeframe):
-    """Send pump or dump alert to all Telegram chats with timeframe info"""
+async def send_price_alert(symbol, price, change_percent, volume, volume_change_percent, timeframe, market_cap=None, total_market_cap=None):
+    """Send pump or dump alert to all Telegram chats with timeframe info and market cap"""
     
     # اعتبارسنجی ورودی‌ها
     if not symbol or price <= 0:
@@ -187,6 +200,26 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
     else:
         price_format = f"${price:.4f}"
     
+    # فرمت market cap
+    market_cap_text = ""
+    if market_cap and market_cap > 0:
+        if market_cap >= 1e9:
+            market_cap_text = f"\n💎 Market Cap: ${market_cap/1e9:.2f}B"
+        elif market_cap >= 1e6:
+            market_cap_text = f"\n💎 Market Cap: ${market_cap/1e6:.2f}M"
+        else:
+            market_cap_text = f"\n💎 Market Cap: ${market_cap:,.0f}"
+    
+    # فرمت total market cap
+    total_market_cap_text = ""
+    if total_market_cap and total_market_cap > 0:
+        if total_market_cap >= 1e9:
+            total_market_cap_text = f"\n🏆 Total Portfolio Cap: ${total_market_cap/1e9:.2f}B"
+        elif total_market_cap >= 1e6:
+            total_market_cap_text = f"\n🏆 Total Portfolio Cap: ${total_market_cap/1e6:.2f}M"
+        else:
+            total_market_cap_text = f"\n🏆 Total Portfolio Cap: ${total_market_cap:,.0f}"
+    
     if change_percent > 0:
         # Pump Alert
         msg = (
@@ -196,7 +229,9 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
             f"💰 Price: {price_format}\n"
             f"📈 Price Change: +{change_percent:.2f}%\n"
             f"📊 Volume Change: {volume_change_percent:+.2f}%\n"
-            f"📊 24h Volume: ${volume:,.2f}\n"
+            f"📊 24h Volume: ${volume:,.2f}"
+            f"{market_cap_text}"
+            f"{total_market_cap_text}\n"
             f"🎯 **TO THE MOON!** 🌙"
         )
         alert_type = "PUMP"
@@ -209,7 +244,9 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
             f"💰 Price: {price_format}\n"
             f"📉 Price Change: {change_percent:.2f}%\n"
             f"📊 Volume Change: {volume_change_percent:+.2f}%\n"
-            f"📊 24h Volume: ${volume:,.2f}\n"
+            f"📊 24h Volume: ${volume:,.2f}"
+            f"{market_cap_text}"
+            f"{total_market_cap_text}\n"
             f"⚠️ **PRICE DROPPING!** ⚡️"
         )
         alert_type = "DUMP"
@@ -282,8 +319,10 @@ def update_timeframe_data(timeframe, current_data, current_time):
     tf_data = timeframe_data[timeframe]
     
     for symbol, data in current_data.items():
-        tf_data["prices"][symbol] = data["price"]
-        tf_data["volumes"][symbol] = data["volume"]
+        # پرهیز از ذخیره کردن total market cap در داده های تاریخی
+        if symbol != "_total_market_cap":
+            tf_data["prices"][symbol] = data["price"]
+            tf_data["volumes"][symbol] = data["volume"]
     
     tf_data["last_check"] = current_time
 
@@ -293,6 +332,10 @@ def get_price_changes(timeframe, current_data):
     changes = {}
     
     for symbol, current_info in current_data.items():
+        # پرهیز از پردازش total market cap
+        if symbol == "_total_market_cap":
+            continue
+            
         current_price = current_info["price"]
         current_volume = current_info["volume"]
         
@@ -308,7 +351,8 @@ def get_price_changes(timeframe, current_data):
                     "price_change": price_change,
                     "volume_change": volume_change,
                     "current_price": current_price,
-                    "current_volume": current_volume
+                    "current_volume": current_volume,
+                    "market_cap": current_info.get("market_cap", 0)
                 }
             except ZeroDivisionError:
                 print(f"⚠️ Division by zero for {symbol} in {timeframe}")
@@ -329,19 +373,21 @@ async def check_timeframe(timeframe, current_data, current_time):
         return 0
     
     alerts_sent = 0
+    total_market_cap = current_data.get("_total_market_cap", 0)
     
     for symbol, change_data in changes.items():
         price_change = change_data["price_change"]
         volume_change = change_data["volume_change"]
         current_price = change_data["current_price"]
         current_volume = change_data["current_volume"]
+        market_cap = change_data.get("market_cap", 0)
         
         print(f"💰 {symbol} ({timeframe}): Price: {price_change:+.2f}%, Volume: {volume_change:+.2f}%")
         
         # چک کردن تغییرات قیمت معنادار
         if abs(price_change) >= PRICE_CHANGE_THRESHOLD:
             try:
-                if await send_price_alert(symbol, current_price, price_change, current_volume, volume_change, timeframe):
+                if await send_price_alert(symbol, current_price, price_change, current_volume, volume_change, timeframe, market_cap, total_market_cap):
                     alerts_sent += 1
                     # تاخیر بین ارسال هر alert
                     await asyncio.sleep(1)
@@ -371,10 +417,16 @@ async def send_regular_update(data):
         return
     
     msg_parts = ["📊 **Price Update:**\n"]
+    total_market_cap = data.get("_total_market_cap", 0)
     
     try:
         for symbol, info in data.items():
+            # پرهیز از نمایش total market cap در لیست توکن ها
+            if symbol == "_total_market_cap":
+                continue
+                
             price = info["price"]
+            market_cap = info.get("market_cap", 0)
             
             # فرمت بهتر برای قیمت
             if price < 0.0001:
@@ -384,7 +436,27 @@ async def send_regular_update(data):
             else:
                 price_str = f"${price:.6f}"
             
-            msg_parts.append(f"💰 **{symbol}**: {price_str}")
+            # فرمت market cap
+            if market_cap >= 1e9:
+                cap_str = f"({market_cap/1e9:.2f}B)"
+            elif market_cap >= 1e6:
+                cap_str = f"({market_cap/1e6:.2f}M)"
+            elif market_cap > 0:
+                cap_str = f"(${market_cap:,.0f})"
+            else:
+                cap_str = ""
+            
+            msg_parts.append(f"💰 **{symbol}**: {price_str} {cap_str}")
+        
+        # اضافه کردن total market cap
+        if total_market_cap > 0:
+            if total_market_cap >= 1e9:
+                total_cap_str = f"${total_market_cap/1e9:.2f}B"
+            elif total_market_cap >= 1e6:
+                total_cap_str = f"${total_market_cap/1e6:.2f}M"
+            else:
+                total_cap_str = f"${total_market_cap:,.0f}"
+            msg_parts.append(f"\n🏆 **Total Portfolio Cap**: {total_cap_str}")
         
         msg_parts.append(f"\n🕐 Updated: {time.strftime('%H:%M:%S')}")
         
