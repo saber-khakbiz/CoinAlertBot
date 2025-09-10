@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import asyncio
+from datetime import datetime, timedelta
 from telegram import Bot
 from dotenv import load_dotenv
 from tokens import TOKENS
@@ -25,8 +26,9 @@ print(f"📋 Bot will send messages to {len(CHAT_IDS)} chat(s)")
 
 bot = Bot(token=TOKEN)
 
-# File paths for custom messages
+# File paths for custom messages and daily data storage
 MESSAGE_FILE_PATH = "bot_messages.txt"
+DAILY_DATA_FILE = "daily_prices.json"
 
 # Thresholds for alerts
 PRICE_CHANGE_THRESHOLD = 5.0  # 5% price change
@@ -38,11 +40,16 @@ SEND_ONLY_PUMPS = False  # تغییر شد: False تا dump alert هم ارسا�
 UPDATE_INTERVAL = 300
 CHECK_INTERVAL = 120  # Check API every 2 minutes (safe from rate limiting)
 
+# Daily snapshot settings
+DAILY_SNAPSHOT_HOUR = 6  # ساعت 6 صبح برای snapshot روزانه
+DAILY_SNAPSHOT_MINUTE = 0
+
 # Multi-timeframe settings
 TIMEFRAMES = {
     "3min": 180,   # 3 minutes in seconds
     "5min": 300,   # 5 minutes in seconds
-    "15min": 900   # 15 minutes in seconds
+    "15min": 900,  # 15 minutes in seconds
+    "daily": 86400  # 24 hours in seconds (for reference, but handled differently)
 }
 
 # Storage for historical data for each timeframe
@@ -50,10 +57,148 @@ timeframe_data = {
     "3min": {"prices": {}, "volumes": {}, "last_check": 0},
     "5min": {"prices": {}, "volumes": {}, "last_check": 0},
     "15min": {"prices": {}, "volumes": {}, "last_check": 0},
+    "daily": {"prices": {}, "volumes": {}, "last_snapshot": 0, "snapshot_date": ""}
 }
 
 last_update_time = 0
 startup_time = time.time()
+
+def get_daily_snapshot_time():
+    """محاسبه زمان snapshot روزانه (ساعت 6 صبح)"""
+    now = datetime.now()
+    today_snapshot = now.replace(hour=DAILY_SNAPSHOT_HOUR, minute=DAILY_SNAPSHOT_MINUTE, second=0, microsecond=0)
+    
+    # اگر هنوز به ساعت 6 امروز نرسیده، از دیروز استفاده کن
+    if now < today_snapshot:
+        yesterday_snapshot = today_snapshot - timedelta(days=1)
+        return yesterday_snapshot
+    else:
+        return today_snapshot
+
+def should_take_daily_snapshot():
+    """چک کردن اینکه آیا نیاز به snapshot روزانه هست یا نه"""
+    daily_data = timeframe_data["daily"]
+    current_time = datetime.now()
+    
+    # اگر هیچ snapshot قبلی نداریم
+    if daily_data["last_snapshot"] == 0:
+        return True
+    
+    # اگر تاریخ snapshot تغییر کرده (روز جدید)
+    last_snapshot_date = datetime.fromtimestamp(daily_data["last_snapshot"]).date()
+    snapshot_time = get_daily_snapshot_time()
+    
+    # اگر از آخرین snapshot بیش از 24 ساعت گذشته و به ساعت مناسب رسیده‌ایم
+    time_since_snapshot = time.time() - daily_data["last_snapshot"]
+    current_hour = current_time.hour
+    current_minute = current_time.minute
+    
+    # چک کن که آیا در بازه مناسب برای snapshot هستیم (6:00 تا 6:30 صبح)
+    is_snapshot_time = (current_hour == DAILY_SNAPSHOT_HOUR and 0 <= current_minute <= 30)
+    
+    return (time_since_snapshot >= 86400 and is_snapshot_time) or daily_data["last_snapshot"] == 0
+
+def save_daily_snapshot(current_data):
+    """ذخیره snapshot روزانه"""
+    try:
+        import json
+        
+        daily_data = timeframe_data["daily"]
+        current_time = time.time()
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # آپدیت کردن داده‌های daily در memory
+        for symbol, data in current_data.items():
+            if symbol != "_total_market_cap":
+                daily_data["prices"][symbol] = data["price"]
+                daily_data["volumes"][symbol] = data["volume"]
+        
+        daily_data["last_snapshot"] = current_time
+        daily_data["snapshot_date"] = current_date
+        
+        # ذخیره در فایل برای persistent storage
+        daily_snapshot = {
+            "date": current_date,
+            "timestamp": current_time,
+            "prices": daily_data["prices"].copy(),
+            "volumes": daily_data["volumes"].copy(),
+            "total_market_cap": current_data.get("_total_market_cap", 0)
+        }
+        
+        with open(DAILY_DATA_FILE, 'w') as f:
+            json.dump(daily_snapshot, f, indent=2)
+        
+        print(f"📅 Daily snapshot saved for {current_date} at {datetime.fromtimestamp(current_time).strftime('%H:%M:%S')}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error saving daily snapshot: {e}")
+        return False
+
+def load_daily_snapshot():
+    """لود کردن snapshot روزانه از فایل"""
+    try:
+        import json
+        
+        if not os.path.exists(DAILY_DATA_FILE):
+            print(f"📅 Daily snapshot file ({DAILY_DATA_FILE}) not found")
+            print("💡 Please create the file manually or wait for the first 6AM snapshot")
+            return False
+        
+        with open(DAILY_DATA_FILE, 'r') as f:
+            daily_snapshot = json.load(f)
+        
+        # بررسی صحت فرمت فایل
+        required_keys = ["date", "timestamp", "prices", "volumes"]
+        for key in required_keys:
+            if key not in daily_snapshot:
+                print(f"❌ Invalid format in {DAILY_DATA_FILE}: missing '{key}' key")
+                return False
+        
+        daily_data = timeframe_data["daily"]
+        daily_data["prices"] = daily_snapshot.get("prices", {})
+        daily_data["volumes"] = daily_snapshot.get("volumes", {})
+        daily_data["last_snapshot"] = daily_snapshot.get("timestamp", 0)
+        daily_data["snapshot_date"] = daily_snapshot.get("date", "")
+        
+        print(f"✅ Daily snapshot loaded: {daily_data['snapshot_date']} ({len(daily_data['prices'])} tokens)")
+        return True
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON format in {DAILY_DATA_FILE}: {e}")
+        print("💡 Please check the file format or delete it to start fresh")
+        return False
+    except Exception as e:
+        print(f"❌ Error loading daily snapshot: {e}")
+        return False
+
+def get_daily_changes(current_data):
+    """محاسبه تغییرات روزانه نسبت به snapshot ساعت 6 صبح"""
+    daily_data = timeframe_data["daily"]
+    changes = {}
+    
+    if not daily_data["prices"]:
+        return {}
+    
+    for symbol, current_info in current_data.items():
+        if symbol == "_total_market_cap":
+            continue
+        
+        current_price = current_info["price"]
+        daily_price = daily_data["prices"].get(symbol)
+        
+        if daily_price is not None and daily_price > 0:
+            try:
+                daily_change = ((current_price - daily_price) / daily_price) * 100
+                changes[symbol] = {
+                    "daily_change": daily_change,
+                    "daily_price": daily_price,
+                    "current_price": current_price
+                }
+            except ZeroDivisionError:
+                continue
+    
+    return changes
 
 def read_message_from_file(file_path):
     """
@@ -225,8 +370,8 @@ async def send_to_all_chats(message, parse_mode=None):
     
     return success_count > 0
 
-async def send_price_alert(symbol, price, change_percent, volume, volume_change_percent, timeframe, market_cap=None, total_market_cap=None):
-    """Send pump or dump alert to all Telegram chats with timeframe info and market cap"""
+async def send_price_alert(symbol, price, change_percent, volume, volume_change_percent, timeframe, market_cap=None, total_market_cap=None, daily_change=None):
+    """Send pump or dump alert to all Telegram chats with timeframe info, market cap, and daily changes"""
     
     # اعتبارسنجی ورودی‌ها
     if not symbol or price <= 0:
@@ -263,6 +408,16 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
         else:
             total_market_cap_text = f"\n🏆 Total Portfolio Cap: ${total_market_cap:,.0f}"
     
+    # فرمت daily change
+    daily_change_text = ""
+    if daily_change is not None:
+        daily_data = timeframe_data["daily"]
+        snapshot_date = daily_data.get("snapshot_date", "today")
+        if daily_change > 0:
+            daily_change_text = f"\n📅 24h Change (since {snapshot_date} 6AM): +{daily_change:.2f}%"
+        else:
+            daily_change_text = f"\n📅 24h Change (since {snapshot_date} 6AM): {daily_change:.2f}%"
+    
     if change_percent > 0:
         # Pump Alert
         msg = (
@@ -274,7 +429,8 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
             f"📊 Volume Change: {volume_change_percent:+.2f}%\n"
             f"📊 24h Volume: ${volume:,.2f}"
             f"{market_cap_text}"
-            f"{total_market_cap_text}\n"
+            f"{total_market_cap_text}"
+            f"{daily_change_text}\n"
             f"🎯 **TO THE MOON!** 🌙"
         )
         alert_type = "PUMP"
@@ -289,7 +445,8 @@ async def send_price_alert(symbol, price, change_percent, volume, volume_change_
             f"📊 Volume Change: {volume_change_percent:+.2f}%\n"
             f"📊 24h Volume: ${volume:,.2f}"
             f"{market_cap_text}"
-            f"{total_market_cap_text}\n"
+            f"{total_market_cap_text}"
+            f"{daily_change_text}\n"
             f"⚠️ **PRICE DROPPING!** ⚡️"
         )
         alert_type = "DUMP"
@@ -343,6 +500,9 @@ async def test_bot_connection():
 
 def should_check_timeframe(timeframe, current_time):
     """Check if we should analyze this timeframe based on current time"""
+    if timeframe == "daily":
+        return False  # Daily is handled separately
+    
     tf_data = timeframe_data[timeframe]
     interval = TIMEFRAMES[timeframe]
     
@@ -359,6 +519,9 @@ def should_check_timeframe(timeframe, current_time):
 
 def update_timeframe_data(timeframe, current_data, current_time):
     """Update historical data for a specific timeframe"""
+    if timeframe == "daily":
+        return  # Daily is handled separately
+    
     tf_data = timeframe_data[timeframe]
     
     for symbol, data in current_data.items():
@@ -371,6 +534,9 @@ def update_timeframe_data(timeframe, current_data, current_time):
 
 def get_price_changes(timeframe, current_data):
     """Calculate price and volume changes for a specific timeframe"""
+    if timeframe == "daily":
+        return {}  # Daily is handled separately
+    
     tf_data = timeframe_data[timeframe]
     changes = {}
     
@@ -405,6 +571,9 @@ def get_price_changes(timeframe, current_data):
 
 async def check_timeframe(timeframe, current_data, current_time):
     """Check a specific timeframe for alerts"""
+    if timeframe == "daily":
+        return 0  # Daily is handled separately
+    
     print(f"🔍 Checking {timeframe} timeframe...")
     
     # Get price changes for this timeframe
@@ -417,6 +586,7 @@ async def check_timeframe(timeframe, current_data, current_time):
     
     alerts_sent = 0
     total_market_cap = current_data.get("_total_market_cap", 0)
+    daily_changes = get_daily_changes(current_data)
     
     for symbol, change_data in changes.items():
         price_change = change_data["price_change"]
@@ -425,12 +595,17 @@ async def check_timeframe(timeframe, current_data, current_time):
         current_volume = change_data["current_volume"]
         market_cap = change_data.get("market_cap", 0)
         
-        print(f"💰 {symbol} ({timeframe}): Price: {price_change:+.2f}%, Volume: {volume_change:+.2f}%")
+        # دریافت daily change برای این symbol
+        daily_change = daily_changes.get(symbol, {}).get("daily_change")
+        
+        print(f"💰 {symbol} ({timeframe}): Price: {price_change:+.2f}%, Volume: {volume_change:+.2f}%"
+              f"{f', Daily: {daily_change:+.2f}%' if daily_change is not None else ''}")
         
         # چک کردن تغییرات قیمت معنادار
         if abs(price_change) >= PRICE_CHANGE_THRESHOLD:
             try:
-                if await send_price_alert(symbol, current_price, price_change, current_volume, volume_change, timeframe, market_cap, total_market_cap):
+                if await send_price_alert(symbol, current_price, price_change, current_volume, 
+                                        volume_change, timeframe, market_cap, total_market_cap, daily_change):
                     alerts_sent += 1
                     # تاخیر بین ارسال هر alert
                     await asyncio.sleep(1)
@@ -447,6 +622,39 @@ async def check_timeframe(timeframe, current_data, current_time):
     
     return alerts_sent
 
+async def handle_daily_snapshot(current_data):
+    """Handle daily snapshot logic"""
+    try:
+        if should_take_daily_snapshot():
+            if save_daily_snapshot(current_data):
+                daily_data = timeframe_data["daily"]
+                snapshot_time = datetime.fromtimestamp(daily_data["last_snapshot"]).strftime('%H:%M:%S')
+                snapshot_date = daily_data["snapshot_date"]
+                
+                # ارسال notification مربوط به daily snapshot
+                total_market_cap = current_data.get("_total_market_cap", 0)
+                if total_market_cap >= 1e9:
+                    cap_str = f"${total_market_cap/1e9:.2f}B"
+                elif total_market_cap >= 1e6:
+                    cap_str = f"${total_market_cap/1e6:.2f}M"
+                else:
+                    cap_str = f"${total_market_cap:,.0f}"
+                
+                snapshot_msg = (
+                    f"📅 Daily Snapshot Saved!\n"
+                    f"🕕 Time: {snapshot_date} at {snapshot_time}\n"
+                    f"💰 Total Portfolio Cap: {cap_str}\n"
+                    f"📊 Tokens: {len([k for k in current_data.keys() if k != '_total_market_cap'])}\n"
+                    f"ℹ️ This will be used for 24h change calculations"
+                )
+                
+                await send_message_safe(snapshot_msg)
+                return True
+    except Exception as e:
+        print(f"❌ Error in daily snapshot handling: {e}")
+    
+    return False
+
 async def send_regular_update(data):
     """Send regular price update to all chats"""
     global last_update_time
@@ -461,6 +669,7 @@ async def send_regular_update(data):
     
     msg_parts = ["📊 **Price Update:**\n"]
     total_market_cap = data.get("_total_market_cap", 0)
+    daily_changes = get_daily_changes(data)
     
     try:
         for symbol, info in data.items():
@@ -470,6 +679,7 @@ async def send_regular_update(data):
                 
             price = info["price"]
             market_cap = info.get("market_cap", 0)
+            daily_change = daily_changes.get(symbol, {}).get("daily_change")
             
             # فرمت بهتر برای قیمت
             if price < 0.0001:
@@ -489,7 +699,15 @@ async def send_regular_update(data):
             else:
                 cap_str = ""
             
-            msg_parts.append(f"💰 **{symbol}**: {price_str} {cap_str}")
+            # فرمت daily change
+            daily_str = ""
+            if daily_change is not None:
+                if daily_change > 0:
+                    daily_str = f" [24h: +{daily_change:.2f}%]"
+                else:
+                    daily_str = f" [24h: {daily_change:.2f}%]"
+            
+            msg_parts.append(f"💰 **{symbol}**: {price_str} {cap_str}{daily_str}")
         
         # اضافه کردن total market cap
         if total_market_cap > 0:
@@ -501,6 +719,11 @@ async def send_regular_update(data):
                 total_cap_str = f"${total_market_cap:,.0f}"
             msg_parts.append(f"\n🏆 **Total Portfolio Cap**: {total_cap_str}")
         
+        # اضافه کردن daily snapshot info
+        daily_data = timeframe_data["daily"]
+        if daily_data.get("snapshot_date"):
+            msg_parts.append(f"📅 **Daily baseline**: {daily_data['snapshot_date']} 6AM")
+        
         msg_parts.append(f"\n🕐 Updated: {time.strftime('%H:%M:%S')}")
         
         await send_to_all_chats("\n".join(msg_parts), parse_mode='Markdown')
@@ -510,7 +733,7 @@ async def send_regular_update(data):
         print(f"❌ Error sending regular update: {e}")
 
 async def check_all_timeframes():
-    """Check all tokens across multiple timeframes"""
+    """Check all tokens across multiple timeframes and handle daily snapshots"""
     print("🔁 Fetching current token data...")
     
     current_data = get_all_prices_and_volumes()
@@ -522,8 +745,14 @@ async def check_all_timeframes():
     current_time = time.time()
     total_alerts = 0
     
-    # Check each timeframe
+    # Handle daily snapshot first
+    await handle_daily_snapshot(current_data)
+    
+    # Check each timeframe (excluding daily)
     for timeframe in TIMEFRAMES.keys():
+        if timeframe == "daily":
+            continue  # Daily is handled separately
+        
         try:
             if should_check_timeframe(timeframe, current_time):
                 alerts = await check_timeframe(timeframe, current_data, current_time)
@@ -536,6 +765,8 @@ async def check_all_timeframes():
     
     # Initialize empty timeframes (first run)
     for timeframe in TIMEFRAMES.keys():
+        if timeframe == "daily":
+            continue
         tf_data = timeframe_data[timeframe]
         if not tf_data["prices"]:
             update_timeframe_data(timeframe, current_data, current_time)
@@ -556,12 +787,23 @@ async def main_async():
         print("🛑 Stopping due to connection issues")
         return
     
+    # Load existing daily snapshot on startup
+    load_daily_snapshot()
+    
     try:        
         print("🚀 Multi-timeframe bot started successfully!")
-        print(f"📊 Monitoring timeframes: {list(TIMEFRAMES.keys())}")
+        print(f"📊 Monitoring timeframes: {[tf for tf in TIMEFRAMES.keys() if tf != 'daily']}")
+        print(f"📅 Daily snapshot time: {DAILY_SNAPSHOT_HOUR:02d}:{DAILY_SNAPSHOT_MINUTE:02d}")
         print(f"⏱️ Check interval: {CHECK_INTERVAL} seconds")
         print(f"🎯 Price change threshold: {PRICE_CHANGE_THRESHOLD}%")
         print(f"📈 Monitoring {len(TOKENS)} tokens")
+        
+        # Show current daily snapshot status
+        daily_data = timeframe_data["daily"]
+        if daily_data.get("snapshot_date"):
+            print(f"📅 Daily baseline loaded: {daily_data['snapshot_date']} ({len(daily_data['prices'])} tokens)")
+        else:
+            print("📅 No daily baseline found - will create one at next 6AM")
         
         cycle_count = 0
         
