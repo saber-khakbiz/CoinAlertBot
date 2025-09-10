@@ -76,6 +76,31 @@ def read_message_from_file(file_path):
         print(f"❌ Error reading message file {file_path}: {e}")
         return None
 
+def get_detailed_market_cap(token_id):
+    """
+    دریافت market cap دقیق از endpoint کامل‌تر API
+    """
+    url = f"https://api.coingecko.com/api/v3/coins/{token_id}"
+    
+    params = {
+        'localization': 'false',
+        'tickers': 'false',
+        'market_data': 'true',
+        'community_data': 'false',
+        'developer_data': 'false',
+        'sparkline': 'false'
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            market_cap = data.get('market_data', {}).get('market_cap', {}).get('usd')
+            return float(market_cap) if market_cap else None
+        return None
+    except:
+        return None
+
 def get_all_prices_and_volumes():
     """Fetch all token prices and volumes in a single API call"""
     url = "https://api.coingecko.com/api/v3/simple/price"
@@ -91,12 +116,12 @@ def get_all_prices_and_volumes():
         "ids": token_ids,
         "vs_currencies": "usd",
         "include_24hr_vol": "true",
-        "include_market_cap": "true"  # اضافه کردن market cap
+        "include_market_cap": "true"
     }
     
     try:
         print(f"🌐 Requesting data from CoinGecko API...")
-        response = requests.get(url, params=params, timeout=15)  # افزایش timeout
+        response = requests.get(url, params=params, timeout=15)
         response.raise_for_status()
         data = response.json()
         
@@ -105,35 +130,53 @@ def get_all_prices_and_volumes():
             return {}
         
         results = {}
-        total_market_cap = 0  # برای محاسبه مجموع market cap
+        total_market_cap = 0
         
+        # First pass: get basic data
         for cg_id, symbol in TOKENS.items():
             if cg_id in data:
                 token_data = data[cg_id]
                 price = token_data.get("usd")
                 volume = token_data.get("usd_24h_vol")
-                market_cap = token_data.get("usd_market_cap")
                 
                 if price is not None and volume is not None:
                     results[symbol] = {
-                        "price": float(price),  # اطمینان از نوع داده
+                        "price": float(price),
                         "volume": float(volume),
-                        "market_cap": float(market_cap) if market_cap is not None else 0,
+                        "market_cap": 0,  # Will be updated
                         "cg_id": cg_id
                     }
-                    # اضافه کردن به مجموع market cap
-                    if market_cap is not None:
-                        total_market_cap += float(market_cap)
                 else:
                     print(f"⚠️ Missing price or volume data for {symbol}")
             else:
                 print(f"⚠️ No data returned for {symbol} ({cg_id})")
         
-        # اضافه کردن total market cap به نتایج
+        # Second pass: get accurate market caps using detailed endpoint
+        print("📊 Fetching accurate market cap data...")
+        for symbol, token_info in results.items():
+            cg_id = token_info["cg_id"]
+            detailed_market_cap = get_detailed_market_cap(cg_id)
+            
+            if detailed_market_cap:
+                token_info["market_cap"] = detailed_market_cap
+                total_market_cap += detailed_market_cap
+                print(f"✅ {symbol}: Market Cap = ${detailed_market_cap:,.2f}")
+            else:
+                # Fallback to simple API market cap if detailed fails
+                simple_market_cap = data.get(cg_id, {}).get("usd_market_cap")
+                if simple_market_cap:
+                    token_info["market_cap"] = float(simple_market_cap)
+                    total_market_cap += float(simple_market_cap)
+                    print(f"⚠️ {symbol}: Using fallback Market Cap = ${float(simple_market_cap):,.2f}")
+            
+            # Small delay to avoid rate limiting
+            time.sleep(0.1)
+        
+        # Add total market cap to results
         if results:
             results["_total_market_cap"] = total_market_cap
         
-        print(f"✅ Successfully fetched data for {len(results)} tokens")
+        print(f"✅ Successfully fetched data for {len(results)-1} tokens")  # -1 for _total_market_cap
         print(f"💰 Total Market Cap: ${total_market_cap:,.2f}")
         return results
         
